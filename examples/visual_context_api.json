@@ -1,0 +1,126 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "z_image_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "shift": 3.0
+    }
+  },
+  "5": {
+    "class_type": "ZITCarousel",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "clip": [
+        "2",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "prompt": "An adult woman with curly red hair wearing a green coat, sitting on an oak bench in a park, soft afternoon light, natural photography.",
+      "batch_size": 1,
+      "seed": 12345,
+      "width": 1024,
+      "height": 1024,
+      "steps": 9,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.4,
+      "variation_mode": "poses",
+      "custom_shots": ""
+    }
+  },
+  "6": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "8",
+        0
+      ],
+      "filename_prefix": "ZIT-Carousel"
+    }
+  },
+  "7": {
+    "class_type": "AILab_QwenVL",
+    "inputs": {
+      "model_name": "Qwen3-VL-2B-Instruct",
+      "quantization": "None (FP16)",
+      "attention_mode": "auto",
+      "preset_prompt": "🖼️ Detailed Description",
+      "custom_prompt": "Describe only visible stable details: facial appearance, hair, body proportions, clothing, accessories, location, furniture, objects, colors, materials, lighting and photographic style. Do not guess hidden details or identify the person. Write concise English prose. Omit exact pose, gaze, expression and camera angle because these will vary.",
+      "max_tokens": 512,
+      "keep_model_loaded": false,
+      "seed": 1,
+      "image": [
+        "5",
+        0
+      ]
+    }
+  },
+  "8": {
+    "class_type": "ZITCarousel",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "clip": [
+        "2",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "prompt": "An adult woman with curly red hair wearing a green coat, sitting on an oak bench in a park, soft afternoon light, natural photography.",
+      "batch_size": 4,
+      "seed": 12345,
+      "width": 1024,
+      "height": 1024,
+      "steps": 9,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.4,
+      "variation_mode": "poses",
+      "custom_shots": "",
+      "image": [
+        "5",
+        0
+      ],
+      "reference_description": [
+        "7",
+        0
+      ]
+    }
+  }
+}
