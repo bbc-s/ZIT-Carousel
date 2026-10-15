@@ -56,7 +56,9 @@
       "scheduler": "simple",
       "denoise": 0.6,
       "variation_mode": "poses",
-      "custom_shots": ""
+      "custom_shots": "",
+      "vision_model": "auto",
+      "reference_mode": "auto"
     }
   },
   "6": {

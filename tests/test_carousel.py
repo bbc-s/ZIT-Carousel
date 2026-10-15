@@ -2,16 +2,20 @@ import importlib.util
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from tempfile import TemporaryDirectory
 
 import torch
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parents[1]))
-spec = importlib.util.spec_from_file_location("carousel", ROOT / "carousel.py")
-carousel = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(carousel)
+spec = importlib.util.spec_from_file_location("zit_carousel", ROOT / "__init__.py", submodule_search_locations=[str(ROOT)])
+package = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = package
+spec.loader.exec_module(package)
+carousel = sys.modules["zit_carousel.carousel"]
+vision = sys.modules["zit_carousel.vision"]
 
 
 class Clip:
@@ -38,11 +42,14 @@ class CarouselTests(unittest.TestCase):
             sampler_name="euler", scheduler="simple", denoise=0.4,
             variation_mode="poses", custom_shots="", image=torch.full((1, 16, 16, 3), 0.25),
             reference_description="Curly red hair, green coat, oak bench, soft light",
+            vision_model="off",
         )
         self.calls = []
+        self.masks = []
 
         def sample(model, seed, steps, cfg, sampler, scheduler, positive, negative, latent, **kwargs):
             self.calls.append((seed, latent["samples"].clone(), positive, kwargs))
+            self.masks.append(latent.get("noise_mask"))
             # Mutating a sampler input must not change the shared reference.
             latent["samples"].add_(0.1)
             return (latent,)
@@ -115,6 +122,88 @@ class CarouselTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "cancelled"):
                 self.run_node()
         self.assertEqual(self.calls, [])
+
+    def test_automatic_analysis_runs_once_and_replaces_reference_pose_text(self):
+        details = {key: f"fixed {key}" for key in vision.DETAIL_FIELDS}
+        details["person_box"] = [0.3, 0.2, 0.6, 0.8]
+        with patch.object(carousel, "select_vision_model", return_value="local-vlm"), \
+             patch.object(carousel, "analyze_reference", return_value=details) as analyze, \
+             patch.object(carousel.comfy.model_management, "unload_all_models"):
+            images, report = self.run_node(vision_model="auto", reference_description="")
+        analyze.assert_called_once()
+        self.assertEqual(carousel.json.loads(report)["analysis"], details)
+        self.assertEqual(carousel.json.loads(report)["reference_mode"], "person_inpaint")
+        for call in self.calls:
+            self.assertIn("fixed clothing", call[2])
+            self.assertNotIn(self.inputs["prompt"], call[2])
+        self.assertTrue(all(mask is not None for mask in self.masks))
+        # The mock sampler changes every pixel; compositing must restore the background.
+        self.assertTrue(torch.equal(images[1:, :, :2], images[:1, :, :2].expand(3, -1, -1, -1)))
+        self.assertGreater(images[1, 8, 7, 0].item(), images[0, 8, 7, 0].item())
+
+    def test_camera_uses_whole_frame_even_with_analysis(self):
+        details = {key: f"fixed {key}" for key in vision.DETAIL_FIELDS}
+        details["person_box"] = [0.3, 0.2, 0.6, 0.8]
+        with patch.object(carousel, "select_vision_model", return_value="local-vlm"), \
+             patch.object(carousel, "analyze_reference", return_value=details), \
+             patch.object(carousel.comfy.model_management, "unload_all_models"):
+            _, report = self.run_node(vision_model="auto", reference_description="", variation_mode="camera")
+        self.assertEqual(carousel.json.loads(report)["reference_mode"], "whole_image")
+        self.assertEqual(self.masks, [None, None, None])
+
+    def test_malformed_analysis_fails(self):
+        details = {key: f"fixed {key}" for key in vision.DETAIL_FIELDS}
+        details["person_box"] = [0.1, 0.2, 0.8, 0.9]
+        self.assertEqual(vision.parse_analysis(carousel.json.dumps(details)), details)
+        for text in ("not json", "```", "{}", carousel.json.dumps(details | {"person_box": [0, 0, 100, 100]})):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                vision.parse_analysis(text)
+
+    def test_person_mask_is_finite_and_within_image(self):
+        for box in ([0, 0, 1, 1], [0.4, 0.3, 0.5, 0.8]):
+            mask = carousel.person_mask(torch.zeros(1, 128, 192, 3), box)
+            self.assertEqual(tuple(mask.shape), (1, 128, 192))
+            self.assertTrue(torch.isfinite(mask).all())
+            self.assertGreaterEqual(mask.min().item(), 0)
+            self.assertEqual(mask.max().item(), 1)
+
+    def test_inpaint_cannot_silently_change_camera(self):
+        with self.assertRaisesRegex(ValueError, "fixed camera"):
+            self.run_node(reference_mode="person_inpaint", variation_mode="mixed")
+
+    def test_local_model_selection_rejects_paths_and_missing_weights(self):
+        class LocalNode:
+            @classmethod
+            def INPUT_TYPES(cls):
+                return {"required": {"model_name": (["local-vlm", "incomplete", "../escape"],)}}
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "LLM" / "Qwen-VL"
+            target = root / "local-vlm"
+            target.mkdir(parents=True)
+            (target / "config.json").write_text("{}")
+            (target / "model.safetensors").touch()
+            (root / "incomplete").mkdir()
+            with patch.dict(vision.nodes.NODE_CLASS_MAPPINGS, {"AILab_QwenVL": LocalNode}), \
+                 patch.object(vision.folder_paths, "models_dir", directory), \
+                 patch.object(vision.folder_paths, "folder_names_and_paths", {}):
+                self.assertEqual(list(vision.local_vision_models()), ["local-vlm"])
+                self.assertEqual(vision.select_vision_model("auto"), "local-vlm")
+                with self.assertRaisesRegex(ValueError, "no selected local"):
+                    vision.select_vision_model("../escape")
+
+    def test_vision_adapter_uses_reference_and_releases_model(self):
+        details = {key: f"fixed {key}" for key in vision.DETAIL_FIELDS}
+        details["person_box"] = [0, 0, 1, 1]
+        instance = Mock()
+        instance.process.return_value = (carousel.json.dumps(details),)
+        node = Mock(return_value=instance)
+        with patch.dict(vision.nodes.NODE_CLASS_MAPPINGS, {"AILab_QwenVL": node}):
+            self.assertEqual(vision.analyze_reference(self.inputs["image"], "local-vlm", 21), details)
+        options = instance.process.call_args.kwargs
+        self.assertIs(options["image"], self.inputs["image"])
+        self.assertFalse(options["keep_model_loaded"])
+        self.assertIn("person_box", options["custom_prompt"])
 
 
 if __name__ == "__main__":
