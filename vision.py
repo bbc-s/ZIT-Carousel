@@ -15,7 +15,8 @@ Return ONLY a JSON object with these keys:
 "style": photographic/rendering style and palette;
 "action": ONLY the coarse activity, such as sitting on the bench or standing in the studio;
 "person_box": [left, top, right, bottom], the bounding box of the entire visible person,
-including hair, clothing, arms and legs, normalized to 0..1 relative to image width/height.
+including hair, clothing, arms, legs and shoes. Use INTEGER coordinates on a 0..1000
+scale relative to the image width/height (not pixels or decimal fractions).
 Each description must be a nonempty English string. Describe only visible details.
 Do not identify the person or invent hidden features. Do not include exact arm positions,
 head orientation, gaze, expression, camera angle or framing in the descriptions: these
@@ -61,15 +62,23 @@ def parse_analysis(text):
         data = json.loads(text)
     except json.JSONDecodeError as error:
         raise ValueError("ZIT Carousel: QwenVL did not return valid reference JSON. Inspect the QwenVL model output.") from error
-    if not isinstance(data, dict) or any(not isinstance(data.get(key), str) or not data[key].strip() for key in DETAIL_FIELDS):
-        raise ValueError("ZIT Carousel: QwenVL reference JSON is missing a person, clothing, environment, lighting, style or action description.")
+    if not isinstance(data, dict):
+        raise ValueError("ZIT Carousel: QwenVL reference analysis must be a JSON object.")
+    details = {}
+    for key in DETAIL_FIELDS:
+        value = data.get(key)
+        if isinstance(value, (dict, list)) and value:
+            value = json.dumps(value, ensure_ascii=False)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"ZIT Carousel: QwenVL reference JSON is missing a {key} description.")
+        details[key] = value.strip()
     box = data.get("person_box")
     if not isinstance(box, list) or len(box) != 4 or any(type(v) not in (int, float) or not math.isfinite(v) for v in box):
-        raise ValueError("ZIT Carousel: QwenVL must return person_box as four normalized numbers.")
+        raise ValueError("ZIT Carousel: QwenVL must return person_box as four numbers on the 0..1000 scale.")
     left, top, right, bottom = box
-    if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
-        raise ValueError("ZIT Carousel: QwenVL person_box must be ordered left, top, right, bottom in 0..1.")
-    return {key: data[key].strip() for key in DETAIL_FIELDS} | {"person_box": box}
+    if not (0 <= left < right <= 1000 and 0 <= top < bottom <= 1000) or max(box) <= 1:
+        raise ValueError("ZIT Carousel: QwenVL person_box must be ordered left, top, right, bottom on the 0..1000 scale.")
+    return details | {"person_box": [value / 1000 for value in box]}
 
 
 def analyze_reference(image, model_name, seed):

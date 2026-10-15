@@ -153,9 +153,12 @@ class CarouselTests(unittest.TestCase):
 
     def test_malformed_analysis_fails(self):
         details = {key: f"fixed {key}" for key in vision.DETAIL_FIELDS}
-        details["person_box"] = [0.1, 0.2, 0.8, 0.9]
-        self.assertEqual(vision.parse_analysis(carousel.json.dumps(details)), details)
-        for text in ("not json", "```", "{}", carousel.json.dumps(details | {"person_box": [0, 0, 100, 100]})):
+        details["person_box"] = [100, 200, 800, 900]
+        self.assertEqual(vision.parse_analysis(carousel.json.dumps(details)), details | {"person_box": [0.1, 0.2, 0.8, 0.9]})
+        nested = vision.parse_analysis(carousel.json.dumps(details | {"clothing": {"shirt": "white", "trousers": "black"}}))
+        self.assertIsInstance(nested["clothing"], str)
+        self.assertIn("white", nested["clothing"])
+        for text in ("not json", "```", "{}", carousel.json.dumps(details | {"person_box": [0, 0, 1001, 1001]}), carousel.json.dumps(details | {"person_box": [0, 0, 1, 1]})):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 vision.parse_analysis(text)
 
@@ -194,12 +197,12 @@ class CarouselTests(unittest.TestCase):
 
     def test_vision_adapter_uses_reference_and_releases_model(self):
         details = {key: f"fixed {key}" for key in vision.DETAIL_FIELDS}
-        details["person_box"] = [0, 0, 1, 1]
+        details["person_box"] = [0, 0, 1000, 1000]
         instance = Mock()
         instance.process.return_value = (carousel.json.dumps(details),)
         node = Mock(return_value=instance)
         with patch.dict(vision.nodes.NODE_CLASS_MAPPINGS, {"AILab_QwenVL": node}):
-            self.assertEqual(vision.analyze_reference(self.inputs["image"], "local-vlm", 21), details)
+            self.assertEqual(vision.analyze_reference(self.inputs["image"], "local-vlm", 21), details | {"person_box": [0, 0, 1, 1]})
         options = instance.process.call_args.kwargs
         self.assertIs(options["image"], self.inputs["image"])
         self.assertFalse(options["keep_model_loaded"])

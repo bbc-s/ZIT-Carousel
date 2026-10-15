@@ -53,3 +53,5 @@ Every variation starts from the original reference latent. Sampling is sequentia
 Drag `examples/text_to_carousel.json` into ComfyUI for the automatic single-node path. `examples/visual_context.json` retains an optional external QwenVL description path without automatic inpainting. Files ending in `_api.json` are equivalent prompts for the local `/prompt` endpoint. Adjust model filenames to installed files.
 
 Run `python tests/test_carousel.py` in ComfyUI's Python environment. Tests cover reference reuse, batch counts/seeds, analysis orchestration, mask compositing, local model selection, invalid VLM output and cancellation. They do not measure identity, pose or camera quality.
+
+Local Qwen3-VL-2B-Instruct analysis was exercised on a 256px reference. Its nested descriptions are normalized to text and its 0-1000 person coordinates to 0-1 internally. Generated-image quality remains unverified.
