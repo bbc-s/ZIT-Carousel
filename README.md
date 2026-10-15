@@ -15,7 +15,11 @@ Place this directory at `ComfyUI/custom_nodes/ZIT-Carousel`, restart ComfyUI, an
 3. Optionally connect a single RGB `image`. Its dimensions take precedence over width/height. Dimensions not divisible by eight are resized down to the nearest multiple of eight before encoding.
 4. Connect `images` to Save Image or Preview Image. Optional `shots_json` records seeds and the exact variant prompts.
 
-Start with 9 steps, CFG 1, Euler/simple, and denoise 0.35–0.45. These are starting values, not measured identity guarantees. Use `poses` for small changes that preserve the prompt's action (including sitting), `camera` for framing/viewpoint changes, or `mixed` for both. Automatic instructions are fixed shot presets, not semantic reasoning. `custom` accepts one instruction per line, cycled as needed; use it for precise control. The presets also cycle after six variations with different seeds.
+Use 9 steps, CFG 1 and Euler/simple as a starting point. The default denoise is now 0.6. At 0.3?0.45 img2img can retain the original pose almost exactly; try 0.6, then 0.7?0.75 if the body still does not move. These are troubleshooting values, not visually validated guarantees. More noise can also change the face, clothes and background. Restart ComfyUI after updating; existing nodes and saved workflows retain their previous denoise value, so change it manually.
+
+`poses` now requests distinct torso and arm positions rather than small gaze/expression changes. `camera` requests framing/viewpoint changes; `mixed` combines both. The requested pose appears first in each variant prompt. Keep the main prompt focused on the person, action, setting and style; exact limb positions in that prompt or in a VLM description can conflict with the variation. Automatic instructions are fixed shot presets, not semantic reasoning. `custom` accepts one complete target pose/framing description per line, cycled as needed. Presets also cycle after six variations with different seeds.
+
+This change improves pose instructions, but does not add independent identity and pose control. If stronger denoise changes the person before it changes the pose, this plain img2img approach cannot meet that case; a compatible pose-control and identity-conditioning model path is needed.
 
 Every variation starts from the original reference latent, never from the preceding variant. Sampling is sequential to avoid holding a whole latent batch on the GPU. ComfyUI owns loading/offloading and sampling; the final image batch still consumes memory proportional to batch size.
 

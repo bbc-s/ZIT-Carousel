@@ -54,7 +54,7 @@
       "cfg": 1.0,
       "sampler_name": "euler",
       "scheduler": "simple",
-      "denoise": 0.4,
+      "denoise": 0.6,
       "variation_mode": "poses",
       "custom_shots": ""
     }
@@ -110,7 +110,7 @@
       "cfg": 1.0,
       "sampler_name": "euler",
       "scheduler": "simple",
-      "denoise": 0.4,
+      "denoise": 0.6,
       "variation_mode": "poses",
       "custom_shots": "",
       "image": [

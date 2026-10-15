@@ -10,12 +10,12 @@ from comfy_extras.nodes_sd3 import EmptySD3LatentImage
 
 
 POSES = (
-    "a slight turn of the head, eyes looking toward the camera",
-    "shoulders turned slightly, a relaxed natural expression",
-    "a different natural hand position, gaze slightly away from the camera",
-    "head tilted slightly, a subtle smile",
-    "upper body turned slightly toward the camera, relaxed hands",
-    "a candid expression, gaze directed to the side",
+    "torso leaning forward, elbows bent, both hands resting on the thighs, looking at the camera",
+    "torso turned to the left, right arm reaching across the body, looking over the left shoulder",
+    "both arms raised above the head, elbows bent, hands touching the hair",
+    "torso leaning back, shoulders open, arms extended out to either side",
+    "torso turned to the right, left hand resting on the waist, right hand lifted near the face",
+    "upper body bending sideways to the left, left arm lowered, right arm curved overhead",
 )
 ANGLES = (
     "camera at eye level, a slight three-quarter view from the left",
@@ -26,10 +26,8 @@ ANGLES = (
     "a wider framing from the same camera direction",
 )
 CONSISTENCY = (
-    "One photograph from the same photo session. Preserve the person's facial features, "
-    "hair, body proportions, clothing and accessories, the same location, furniture, "
-    "objects, lighting, color palette and photographic style. Keep the action described "
-    "in the scene. Change only the requested pose or camera framing."
+    "The same person, facial features, hair, body proportions, clothing and accessories. "
+    "The same location, furniture, objects, lighting, color palette and photographic style."
 )
 
 
@@ -38,7 +36,7 @@ def encode(clip, text):
 
 
 def shot_prompt(scene, description, variation):
-    return "\n".join(part for part in (scene.strip(), description.strip(), CONSISTENCY, variation) if part)
+    return "\n".join(part for part in (f"Photograph: {variation}.", scene.strip(), description.strip(), CONSISTENCY) if part)
 
 
 def variations(mode, custom_shots):
@@ -73,7 +71,7 @@ class ZITCarousel:
                 "cfg": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 20.0, "step": 0.1}),
                 "sampler_name": (comfy.samplers.KSampler.SAMPLERS, {"default": "euler"}),
                 "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"default": "simple"}),
-                "denoise": ("FLOAT", {"default": 0.4, "min": 0.01, "max": 1.0, "step": 0.01, "tooltip": "Variation strength. Lower preserves appearance; higher allows larger changes and more identity drift."}),
+                "denoise": ("FLOAT", {"default": 0.6, "min": 0.01, "max": 1.0, "step": 0.01, "tooltip": "Img2img strength, not an identity lock. Around 0.3-0.45 often preserves the original pose. Try 0.6-0.75 for pose changes, with increased identity drift. Existing workflows keep their saved value."}),
                 "variation_mode": (["poses", "camera", "mixed", "custom"],),
                 "custom_shots": ("STRING", {"multiline": True, "default": "", "tooltip": "One instruction per variant, cycled if fewer than the batch. Used in custom mode."}),
             },

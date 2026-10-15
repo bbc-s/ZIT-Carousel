@@ -89,9 +89,9 @@ class CarouselTests(unittest.TestCase):
     def test_custom_shots_cycle_and_seed_wraps(self):
         self.run_node(seed=(1 << 64) - 1, variation_mode="custom", custom_shots="left view\n\nright view")
         self.assertEqual([call[0] for call in self.calls], [0, 1, 2])
-        self.assertTrue(self.calls[0][2].endswith("left view"))
-        self.assertTrue(self.calls[1][2].endswith("right view"))
-        self.assertTrue(self.calls[2][2].endswith("left view"))
+        self.assertTrue(self.calls[0][2].startswith("Photograph: left view."))
+        self.assertTrue(self.calls[1][2].startswith("Photograph: right view."))
+        self.assertTrue(self.calls[2][2].startswith("Photograph: left view."))
 
     def test_reference_dimensions_override_widgets(self):
         images, _ = self.run_node(image=torch.zeros(1, 19, 27, 3))
