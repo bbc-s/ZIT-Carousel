@@ -54,11 +54,20 @@
       "cfg": 1.0,
       "sampler_name": "euler",
       "scheduler": "simple",
-      "denoise": 0.6,
+      "denoise": 1.0,
       "variation_mode": "poses",
       "custom_shots": "",
       "vision_model": "auto",
-      "reference_mode": "auto"
+      "reference_mode": "auto",
+      "use_reference_resolution": false,
+      "variation_backend": "auto",
+      "pose_controlnet": "auto",
+      "control_strength": 0.8,
+      "edit_model": "auto",
+      "edit_clip": "auto",
+      "edit_vae": "auto",
+      "edit_steps": 20,
+      "edit_cfg": 4.0
     }
   },
   "6": {
@@ -112,8 +121,8 @@
       "cfg": 1.0,
       "sampler_name": "euler",
       "scheduler": "simple",
-      "denoise": 0.6,
-      "variation_mode": "poses",
+      "denoise": 1.0,
+      "variation_mode": "mixed",
       "custom_shots": "",
       "image": [
         "5",
@@ -123,8 +132,17 @@
         "7",
         0
       ],
-      "vision_model": "auto",
-      "reference_mode": "auto"
+      "vision_model": "off",
+      "reference_mode": "auto",
+      "use_reference_resolution": false,
+      "variation_backend": "reference_edit",
+      "pose_controlnet": "auto",
+      "control_strength": 0.8,
+      "edit_model": "auto",
+      "edit_clip": "auto",
+      "edit_vae": "auto",
+      "edit_steps": 20,
+      "edit_cfg": 4.0
     }
   }
 }

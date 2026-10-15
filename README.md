@@ -1,57 +1,65 @@
 # ZIT-Carousel
 
-Reference-based photo variations for **Z-Image Turbo** in ComfyUI. Generate a first image or supply one. Carousel automatically inspects it with a local QwenVL model and reuses its detailed person, clothing, environment, lighting and style descriptions throughout the batch.
+One ComfyUI node for reference-based photo series. Z-Image Turbo generates the first image, or you supply an RGB image. Subsequent images use **pose ControlNet** or **Qwen Image Edit**, depending on the mode. The old text-only img2img variation path has been replaced.
 
-**Experimental:** descriptions are not identity embeddings. This does not guarantee identical faces, clothing or scene geometry across pose/viewpoint changes. Camera changes remain whole-image img2img and may retain the old viewpoint or alter other details. Visual quality has not been validated end to end.
-
-## Installation
-
-1. Put this directory in `ComfyUI/custom_nodes/ZIT-Carousel`.
-2. Install/load **ComfyUI-QwenVL** and a complete supported vision model, such as `Qwen3-VL-2B-Instruct`, in `ComfyUI/models/LLM/Qwen-VL/<model-name>`. A custom registered `LLM` path uses its first directory, matching that extension. The single-file Qwen text encoder used by Z-Image is not a complete vision model.
-3. Restart ComfyUI and add **ZIT-Carousel > ZIT Carousel**.
-
-Carousel adds no dependencies or downloads. Automatic analysis selects supported models with local config and safetensors weights. Missing models produce an actionable error before generation. ComfyUI-QwenVL owns its dependencies and vision model lifecycle.
+**Experimental integration, not a verified identity lock.** Wiring and data-flow tests pass; generated-image quality has not been tested for this version. Inpainted clothing can change. Another camera view requires synthesizing unseen surfaces and cannot preserve exact background pixels.
 
 ## Wiring
 
 ```text
-Z-Image MODEL --------> model
-Matching Qwen CLIP --> clip     ZIT Carousel -- images --> Save Image
-Matching VAE --------> vae
-Optional RGB image --> image
+Z-Image MODEL ------> model
+Z-Image CLIP -------> clip     ZIT Carousel -- images --> Save Image
+Z-Image VAE --------> vae
+Optional RGB image -> image
 ```
 
-Sampling and decoding happen inside the node. Enter the prompt in Carousel. No external CLIP Text Encode, KSampler, VAE Decode or QwenVL node is needed for this path.
+Sampling, conditioning and decoding happen inside Carousel. No additional ControlNet or editor nodes are needed. For ZIT-Ideogram, connect its **decoded sampler image**, not the rectangle editor preview. `batch_size` includes the reference as image zero. Each variation uses that original reference, never the previous result.
 
-For ZIT-Ideogram, keep its existing graph and connect **its KSampler > VAE Decode result** to Carousel `image`, with the same MODEL/CLIP/VAE. Do not use the rectangle editor preview. Its regional masks are not transferred.
+## Modes
 
-## Controls
+| Mode | Automatic backend | Behavior |
+| --- | --- | --- |
+| `poses` | Z-Image Turbo + Union ControlNet | Six target arm-pose templates, fitted to estimated person/head boxes and seated/standing posture. Fixed camera/head. |
+| `camera` | Qwen Image Edit 2511 | Actual reference image conditioning; asks to change viewpoint/framing while retaining the pose and clothes. |
+| `mixed` | Qwen Image Edit 2511 | Reference-conditioned pose and viewpoint edits. |
+| `custom` | Qwen Image Edit 2511 | One edit instruction per line. |
 
-- `batch_size`: total output count including the reference at index zero. `1` produces only the reference and skips analysis.
-- `vision_model`: `auto` chooses the smallest supported local model by weight-file size. Select a local model explicitly if preferred. `off` disables analysis. No external description connection is needed.
-- `reference_mode`: `auto` uses person-region inpainting for `poses` with automatic analysis, and whole-image img2img otherwise. `whole_image` always processes the full frame. `person_inpaint` requires automatic analysis and a fixed camera (`poses` or `custom`).
-- `denoise`: default `0.6`. At `0.3-0.45` the pose can remain almost exact. Try `0.6`, then `0.7-0.75` if needed; more noise can also change identity and clothing. These are troubleshooting values, not visually measured guarantees. Existing workflow values must be changed manually.
-- `variation_mode`: `poses` varies torso/arms, `camera` varies viewpoint/framing, `mixed` combines both, and `custom` takes one target pose/framing instruction per line. Presets cycle after six variants with different seeds. They are fixed presets, not model-planned shots.
-- `reference_description`: optional external text that overrides automatic analysis when nonempty. This path cannot use automatic person inpainting because it has no person box.
+Set `variation_backend=reference_edit` to use the editor for freer pose changes too. Presets cycle after six variants. Pose guides are generated templates, **not detected skeletons or a 3D reconstruction**. The ControlNet path supports one seated/standing person with enough visible body; use reference editing for other postures. Close crops, occlusion and inaccurate vision boxes can give poor guides.
 
-Start with existing Turbo sampler settings: 9 steps, CFG 1, Euler/simple. Width/height apply only when generating a reference. A supplied reference must be one RGB image; dimensions are resized down to multiples of eight if needed.
+For ControlNet, `reference_mode=auto` masks the union of the source person box and target skeleton, protects the original head rectangle, then composites the result over the reference. Pixels outside the mask remain unchanged. Background inside the mask can change; head protection also prevents changing head position/expression and can leave seams. `whole_image` disables this protection. `person_inpaint` can explicitly constrain reference editing with a fixed camera, but cannot be used with camera/mixed.
 
-## Analysis and inpainting
+## Resolution and settings
 
-QwenVL runs once per batch and returns structured descriptions plus an estimated whole-person bounding box. Exact pose, gaze, expression and camera angle are excluded from the requested descriptions. The original prompt generates the first image. Subsequent prompts use analyzed descriptions and coarse activity instead, avoiding repeated original limb positions/framing. Invalid analysis fails clearly instead of silently falling back to text-only variations.
+- **Width/height now apply to supplied references too.** The image is resized and center-cropped to fit, preserving aspect ratio. Cropping can remove content at the edges.
+- `use_reference_resolution=true` instead uses the reference dimensions, rounded down to multiples of eight. With no reference, width/height always apply.
+- Set **`denoise=1.0`** for ControlNet pose changes. Existing workflows retain saved values such as 0.4, which still constrain movement. The new default is 1.0.
+- ZIT reference/pose defaults: 9 steps, CFG 1, Euler/simple; `control_strength=0.8`.
+- Editor defaults: `edit_steps=20`, `edit_cfg=4`, with the selected sampler/scheduler and full denoise. ZIT's denoise does not restrict the editor.
+- `vision_model=auto` runs a local QwenVL analysis once. Pose control requires it for geometry. In editor mode, a supplied `reference_description` skips this separate analysis; `off` is also valid because the editor itself consumes the reference pixels.
+- `reference_description` supplements automatic pose analysis when connected. It cannot replace geometry.
+- `batch_size=1` skips variant model loading and analysis.
 
-For person inpainting, Carousel expands/feathers the estimated box, supplies it as the latent noise mask, and composites the result over the reference. **Pixels outside the expanded mask remain exactly the reference.** This is a rectangular region, not silhouette segmentation: background inside it can change, and new limbs outside it can be clipped. Check the estimated box in `shots_json`. This path is intended for one visible person.
+## Local models
 
-Camera/mixed modes use the whole frame because another viewpoint needs a different background projection. They preserve scene descriptions, not exact background pixels. Text analysis and inpainting do not provide geometric camera control or an independent face lock.
+Install in `ComfyUI/custom_nodes/ZIT-Carousel`, then restart ComfyUI. Current native `ZImageFunControlnet` and `TextEncodeQwenImageEditPlus` support is required. No additional Python dependencies or automatic downloads are added.
 
-Every variation starts from the original reference latent. Sampling is sequential. ComfyUI models are offloaded before analysis; QwenVL is called with `keep_model_loaded=false` to release its model before sampling. Final image-batch memory still grows with batch size.
+For automatic analysis, install **ComfyUI-QwenVL** and a complete supported model such as `Qwen3-VL-2B-Instruct` under `models/LLM/Qwen-VL/`. This is separate from the ZIT text encoder.
 
-`shots_json` records analysis, selected vision model, person box, actual reference mode, seeds and final prompts. `images` connects directly to Preview Image or Save Image.
+The `auto` model selections resolve these exact files; advanced selectors allow explicitly choosing compatible local alternatives:
 
-## Examples and checks
+| Purpose | File location | Download |
+| --- | --- | --- |
+| Pose ControlNet | `models/model_patches/Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors` | [Alibaba-PAI Union 2.1](https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/tree/main), about 2.02 GB |
+| Reference editor | `models/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors` | [Comfy-Org Qwen Image Edit](https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/tree/main/split_files/diffusion_models), about 20.5 GB |
+| Editor encoder | `models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors` | [Comfy-Org encoder](https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/tree/main/split_files/text_encoders), about 9.38 GB |
+| Editor VAE | `models/vae/qwen_image_vae.safetensors` | [Comfy-Org Qwen Image VAE](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/tree/main/split_files/vae) |
 
-Drag `examples/text_to_carousel.json` into ComfyUI for the automatic single-node path. `examples/visual_context.json` retains an optional external QwenVL description path without automatic inpainting. Files ending in `_api.json` are equivalent prompts for the local `/prompt` endpoint. Adjust model filenames to installed files.
+Pose-only use does not require editor weights. Missing files stop the node before first-image generation; there is no silent fallback to the old behavior. Loaders use ComfyUI's model management and filename resolvers. The editor is substantially heavier than ZIT, especially with CPU offloading on an 8 GB GPU; runtime/memory have not been benchmarked. No models or image tensors are cached by Carousel across executions.
 
-Run `python tests/test_carousel.py` in ComfyUI's Python environment. Tests cover reference reuse, batch counts/seeds, analysis orchestration, mask compositing, local model selection, invalid VLM output and cancellation. They do not measure identity, pose or camera quality.
+## Examples and verification
 
-Local Qwen3-VL-2B-Instruct analysis was exercised on a 256px reference. Its nested descriptions are normalized to text and its 0-1000 person coordinates to 0-1 internally. Generated-image quality remains unverified.
+`examples/text_to_carousel.json` is the automatic pose workflow. `examples/visual_context.json` demonstrates an external description with reference editing. Matching `_api.json` files are API prompts. Update ZIT model filenames for your installation.
+
+`shots_json` records backend, model filenames, analysis/boxes, output dimensions, seeds, prompts and effective sampling settings. `images` is the complete decoded batch.
+
+Run `python tests/test_carousel.py` using ComfyUI's Python environment. Tests exercise dimensions, reference reuse, masks, distinct pose guides, backend routing, local file validation, cancellation and native adapter contracts with mocked sampling/model loading. They do not generate pictures or prove visual consistency.

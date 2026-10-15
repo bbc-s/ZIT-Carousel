@@ -147,7 +147,7 @@
       ],
       "size": [
         360,
-        650
+        1050
       ],
       "flags": {},
       "order": 4,
@@ -208,11 +208,20 @@
         1.0,
         "euler",
         "simple",
-        0.6,
+        1.0,
         "poses",
         "",
         "auto",
-        "auto"
+        "auto",
+        false,
+        "auto",
+        "auto",
+        0.8,
+        "auto",
+        "auto",
+        "auto",
+        20,
+        4.0
       ]
     },
     {
@@ -303,7 +312,7 @@
       ],
       "size": [
         360,
-        650
+        1050
       ],
       "flags": {},
       "order": 7,
@@ -363,11 +372,20 @@
         1.0,
         "euler",
         "simple",
-        0.6,
-        "poses",
+        1.0,
+        "mixed",
         "",
+        "off",
         "auto",
-        "auto"
+        false,
+        "reference_edit",
+        "auto",
+        0.8,
+        "auto",
+        "auto",
+        "auto",
+        20,
+        4.0
       ]
     }
   ],

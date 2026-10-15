@@ -14,6 +14,9 @@ Return ONLY a JSON object with these keys:
 "lighting": direction, softness, shadows, time of day and color;
 "style": photographic/rendering style and palette;
 "action": ONLY the coarse activity, such as sitting on the bench or standing in the studio;
+"posture": exactly "standing", "seated", or "other";
+"head_box": [left, top, right, bottom] enclosing the visible head including hair,
+using INTEGER coordinates on the same 0..1000 scale;
 "person_box": [left, top, right, bottom], the bounding box of the entire visible person,
 including hair, clothing, arms, legs and shoes. Use INTEGER coordinates on a 0..1000
 scale relative to the image width/height (not pixels or decimal fractions).
@@ -78,7 +81,21 @@ def parse_analysis(text):
     left, top, right, bottom = box
     if not (0 <= left < right <= 1000 and 0 <= top < bottom <= 1000) or max(box) <= 1:
         raise ValueError("ZIT Carousel: QwenVL person_box must be ordered left, top, right, bottom on the 0..1000 scale.")
-    return details | {"person_box": [value / 1000 for value in box]}
+    details["person_box"] = [value / 1000 for value in box]
+    if "head_box" in data:
+        head = data["head_box"]
+        if not isinstance(head, list) or len(head) != 4 or any(type(v) not in (int, float) or not math.isfinite(v) for v in head):
+            raise ValueError("ZIT Carousel: invalid head_box from QwenVL.")
+        if not (0 <= head[0] < head[2] <= 1000 and 0 <= head[1] < head[3] <= 1000) or max(head) <= 1:
+            raise ValueError("ZIT Carousel: head_box must use ordered 0..1000 coordinates.")
+        if not (left <= head[0] < head[2] <= right and top <= head[1] < head[3] <= bottom):
+            raise ValueError("ZIT Carousel: QwenVL head_box must be inside person_box.")
+        details["head_box"] = [value / 1000 for value in head]
+    if "posture" in data:
+        if data["posture"] not in ("standing", "seated", "other"):
+            raise ValueError("ZIT Carousel: invalid posture from QwenVL.")
+        details["posture"] = data["posture"]
+    return details
 
 
 def analyze_reference(image, model_name, seed):
