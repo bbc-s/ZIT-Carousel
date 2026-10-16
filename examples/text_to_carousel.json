@@ -144,7 +144,7 @@
       ],
       "size": [
         360,
-        1050
+        750
       ],
       "flags": {},
       "order": 4,
@@ -209,15 +209,7 @@
         "",
         "auto",
         "auto",
-        false,
-        "auto",
-        "auto",
-        0.8,
-        "auto",
-        "auto",
-        "auto",
-        20,
-        4.0
+        false
       ]
     },
     {

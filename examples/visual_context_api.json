@@ -59,15 +59,7 @@
       "custom_shots": "",
       "vision_model": "auto",
       "reference_mode": "auto",
-      "use_reference_resolution": false,
-      "variation_backend": "auto",
-      "pose_controlnet": "auto",
-      "control_strength": 0.8,
-      "edit_model": "auto",
-      "edit_clip": "auto",
-      "edit_vae": "auto",
-      "edit_steps": 20,
-      "edit_cfg": 4.0
+      "use_reference_resolution": false
     }
   },
   "6": {
@@ -133,16 +125,8 @@
         0
       ],
       "vision_model": "off",
-      "reference_mode": "auto",
-      "use_reference_resolution": false,
-      "variation_backend": "reference_edit",
-      "pose_controlnet": "auto",
-      "control_strength": 0.8,
-      "edit_model": "auto",
-      "edit_clip": "auto",
-      "edit_vae": "auto",
-      "edit_steps": 20,
-      "edit_cfg": 4.0
+      "reference_mode": "whole_image",
+      "use_reference_resolution": false
     }
   }
 }

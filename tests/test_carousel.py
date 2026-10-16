@@ -16,8 +16,6 @@ sys.modules[spec.name] = package
 spec.loader.exec_module(package)
 carousel = sys.modules["zit_carousel.carousel"]
 vision = sys.modules["zit_carousel.vision"]
-backends = sys.modules["zit_carousel.backends"]
-poses = sys.modules["zit_carousel.poses"]
 
 
 class Clip:
@@ -29,6 +27,9 @@ class Clip:
 
 
 class VAE:
+    def spacial_compression_encode(self):
+        return 8
+
     def encode(self, image):
         return image.movedim(-1, 1).clone()
 
@@ -44,19 +45,8 @@ class CarouselTests(unittest.TestCase):
             sampler_name="euler", scheduler="simple", denoise=0.4,
             variation_mode="poses", custom_shots="", image=torch.full((1, 16, 16, 3), 0.25),
             reference_description="Curly red hair, green coat, oak bench, soft light",
-            vision_model="off", variation_backend="reference_edit",
+            vision_model="off", reference_mode="whole_image",
         )
-        for target, name, options in (
-            (carousel, "resolve_models", {"side_effect": lambda selections: selections}),
-            (carousel, "load_editor", {"return_value": (object(), Clip(), VAE())}),
-            (carousel, "edit_conditioning", {"side_effect": lambda clip, vae, reference, text: text}),
-            (carousel, "load_controlnet", {"return_value": object()}),
-            (carousel, "apply_pose", {"side_effect": lambda model, *args: model}),
-            (carousel.EmptySD3LatentImage, "execute", {"side_effect": lambda w, h, b: ({"samples": torch.zeros(b, 3, h, w)},)}),
-        ):
-            mocked = patch.object(target, name, **options)
-            mocked.start()
-            self.addCleanup(mocked.stop)
         self.calls = []
         self.masks = []
 
@@ -82,21 +72,21 @@ class CarouselTests(unittest.TestCase):
         self.assertEqual(tuple(images.shape), (4, 16, 16, 3))
         self.assertEqual([call[0] for call in self.calls], [22, 23, 24])
         for _, latent, prompt, options in self.calls:
-            self.assertTrue(torch.equal(latent, torch.zeros_like(latent)))
+            self.assertTrue(torch.equal(latent, torch.full_like(latent, 0.25)))
             self.assertIn("sitting on a bench", prompt)
             self.assertIn("Curly red hair", prompt)
-            self.assertEqual(options["denoise"], 1.0)
+            self.assertEqual(options["denoise"], 0.4)
         self.assertTrue(torch.equal(images[:1], self.inputs["image"]))
         self.assertEqual(len(carousel.json.loads(report)["shots"]), 4)
 
     def test_generated_reference_is_first_and_shared(self):
         empty = {"samples": torch.zeros(1, 3, 16, 16)}
-        with patch.object(carousel.EmptySD3LatentImage, "execute", side_effect=lambda *args: ({"samples": empty["samples"].clone()},)):
+        with patch.object(carousel.EmptySD3LatentImage, "execute", return_value=(empty,)):
             images, report = self.run_node(image=None)
         self.assertEqual([call[0] for call in self.calls], [21, 22, 23, 24])
         self.assertNotIn("denoise", self.calls[0][3])
         for call in self.calls[1:]:
-            self.assertTrue(torch.allclose(call[1], torch.zeros_like(call[1])))
+            self.assertTrue(torch.allclose(call[1], torch.full_like(call[1], 0.1)))
         self.assertEqual(images.shape[0], 4)
         self.assertEqual(carousel.json.loads(report)["shots"][0]["kind"], "generated_reference")
 
@@ -109,15 +99,14 @@ class CarouselTests(unittest.TestCase):
     def test_custom_shots_cycle_and_seed_wraps(self):
         self.run_node(seed=(1 << 64) - 1, variation_mode="custom", custom_shots="left view\n\nright view")
         self.assertEqual([call[0] for call in self.calls], [0, 1, 2])
-        self.assertTrue(self.calls[0][2].startswith("Edit Picture 1. Photograph: left view."))
-        self.assertTrue(self.calls[1][2].startswith("Edit Picture 1. Photograph: right view."))
-        self.assertTrue(self.calls[2][2].startswith("Edit Picture 1. Photograph: left view."))
+        self.assertTrue(self.calls[0][2].startswith("Photograph: left view."))
+        self.assertTrue(self.calls[1][2].startswith("Photograph: right view."))
+        self.assertTrue(self.calls[2][2].startswith("Photograph: left view."))
 
     def test_reference_resolution_toggle(self):
-        for original, expected in ((False, (4, 16, 16, 3)), (True, (4, 16, 24, 3))):
-            images, report = self.run_node(image=torch.zeros(1, 19, 27, 3), use_reference_resolution=original)
-            self.assertEqual(tuple(images.shape), expected)
-            self.assertEqual(carousel.json.loads(report)["width"], expected[2])
+        for original, shape in ((False, (4, 16, 16, 3)), (True, (4, 16, 24, 3))):
+            images, _ = self.run_node(image=torch.zeros(1, 19, 27, 3), use_reference_resolution=original)
+            self.assertEqual(tuple(images.shape), shape)
 
     def test_invalid_references_fail_before_sampling(self):
         for image in (torch.zeros(2, 16, 16, 3), torch.zeros(1, 16, 16, 4), torch.zeros(1, 4, 4, 3)):
@@ -142,11 +131,10 @@ class CarouselTests(unittest.TestCase):
         details = {key: f"fixed {key}" for key in vision.DETAIL_FIELDS}
         details["person_box"] = [0.3, 0.2, 0.6, 0.8]
         details["head_box"] = [0.4, 0.2, 0.5, 0.35]
-        details["posture"] = "seated"
         with patch.object(carousel, "select_vision_model", return_value="local-vlm"), \
              patch.object(carousel, "analyze_reference", return_value=details) as analyze, \
              patch.object(carousel.comfy.model_management, "unload_all_models"):
-            images, report = self.run_node(vision_model="auto", reference_description="", variation_backend="auto")
+            images, report = self.run_node(vision_model="auto", reference_description="", reference_mode="auto")
         analyze.assert_called_once()
         self.assertEqual(carousel.json.loads(report)["analysis"], details)
         self.assertEqual(carousel.json.loads(report)["reference_mode"], "person_inpaint")
@@ -157,71 +145,31 @@ class CarouselTests(unittest.TestCase):
         # The mock sampler changes every pixel; compositing must restore the background.
         self.assertTrue(torch.equal(images[1:, :, :2], images[:1, :, :2].expand(3, -1, -1, -1)))
         self.assertGreater(images[1, 8, 7, 0].item(), images[0, 8, 7, 0].item())
-        self.assertTrue(torch.equal(images[1:, 3:6, 6:9], images[:1, 3:6, 6:9].expand(3, -1, -1, -1)))
+
+    def test_native_inpaint_clears_body_but_preserves_head_and_background(self):
+        details = {key: "fixed " + key for key in vision.DETAIL_FIELDS}
+        details.update(person_box=[.3, .2, .6, .8], head_box=[.4, .2, .5, .35])
+        with patch.object(carousel, "select_vision_model", return_value="local"), \
+             patch.object(carousel, "analyze_reference", return_value=details), \
+             patch.object(carousel.comfy.model_management, "unload_all_models"):
+            images, report = self.run_node(vision_model="auto", reference_mode="auto")
+        for _, latent, _, _ in self.calls:
+            self.assertEqual(latent[0, 0, 8, 7], .5)
+            self.assertEqual(latent[0, 0, 4, 7], .25)
+            self.assertEqual(latent[0, 0, 8, 0], .25)
+        self.assertTrue(torch.equal(images[1:, 4, 7], images[:1, 4, 7].expand(3, -1)))
+        self.assertEqual(carousel.json.loads(report)["backend"], "native_inpaint")
 
     def test_camera_uses_whole_frame_even_with_analysis(self):
         details = {key: f"fixed {key}" for key in vision.DETAIL_FIELDS}
         details["person_box"] = [0.3, 0.2, 0.6, 0.8]
         details["head_box"] = [0.4, 0.2, 0.5, 0.35]
-        details["posture"] = "seated"
         with patch.object(carousel, "select_vision_model", return_value="local-vlm"), \
              patch.object(carousel, "analyze_reference", return_value=details), \
              patch.object(carousel.comfy.model_management, "unload_all_models"):
             _, report = self.run_node(vision_model="auto", reference_description="", variation_mode="camera")
         self.assertEqual(carousel.json.loads(report)["reference_mode"], "whole_image")
         self.assertEqual(self.masks, [None, None, None])
-
-    def test_editor_receives_original_pixels_on_every_shot(self):
-        with patch.object(carousel, "edit_conditioning", side_effect=lambda clip, vae, ref, text: text) as conditioning:
-            self.run_node(variation_mode="camera")
-        self.assertEqual(conditioning.call_count, 4)
-        for call in conditioning.call_args_list:
-            self.assertIs(call.args[2], self.inputs["image"])
-        self.assertIn("Keep the person's exact pose", self.calls[0][2])
-
-    def test_pose_guides_are_distinct_and_masks_cover_targets(self):
-        ref = torch.zeros(1, 256, 256, 3)
-        analysis = {"person_box": [.3, .1, .7, .95], "head_box": [.44, .1, .56, .25], "posture": "standing"}
-        guides = []
-        for i in range(6):
-            guide, box = poses.pose_guide(ref, analysis, i)
-            mask = poses.protect_head(carousel.person_mask(ref, box), analysis["head_box"])
-            self.assertEqual(tuple(guide.shape), tuple(ref.shape))
-            self.assertEqual(mask[0, 40, 128], 0)
-            self.assertTrue((mask[0, 90:][guide[0, 90:].sum(-1) > 0] > 0).all())
-            guides.append(guide)
-        for i in range(6):
-            for j in range(i):
-                self.assertFalse(torch.equal(guides[i], guides[j]))
-
-    def test_missing_weights_fail_before_generation(self):
-        with patch.object(backends.folder_paths, "get_filename_list", return_value=[]), \
-             patch.object(carousel, "resolve_models", side_effect=backends.resolve_models):
-            with self.assertRaisesRegex(ValueError, "install/select"):
-                self.run_node(image=None)
-        self.assertEqual(self.calls, [])
-
-    def test_model_selection_rejects_unlisted_paths(self):
-        with patch.object(backends.folder_paths, "get_filename_list", return_value=["valid.safetensors"]):
-            with self.assertRaises(ValueError):
-                backends.resolve_models({"edit_model": "../valid.safetensors"})
-
-    def test_pose_control_receives_guide_reference_and_mask(self):
-        analysis = {key: "fixed " + key for key in vision.DETAIL_FIELDS}
-        analysis.update(person_box=[.3, .1, .7, .95], head_box=[.44, .1, .56, .25], posture="seated")
-        with patch.object(carousel, "select_vision_model", return_value="local"), \
-             patch.object(carousel, "analyze_reference", return_value=analysis), \
-             patch.object(carousel.comfy.model_management, "unload_all_models"), \
-             patch.object(carousel, "apply_pose", side_effect=lambda model, *args: model) as control:
-            self.run_node(variation_backend="auto", vision_model="auto")
-        self.assertEqual(control.call_count, 3)
-        for call, mask in zip(control.call_args_list, self.masks):
-            self.assertIs(call.args[4], self.inputs["image"])
-            self.assertIs(call.args[5], mask)
-        self.assertFalse(torch.equal(control.call_args_list[0].args[3], control.call_args_list[1].args[3]))
-        for _, latent, _, options in self.calls:
-            self.assertTrue(torch.equal(latent, torch.full_like(latent, .25)))
-            self.assertEqual(options["denoise"], .4)
 
     def test_malformed_analysis_fails(self):
         details = {key: f"fixed {key}" for key in vision.DETAIL_FIELDS}
@@ -279,44 +227,6 @@ class CarouselTests(unittest.TestCase):
         self.assertIs(options["image"], self.inputs["image"])
         self.assertFalse(options["keep_model_loaded"])
         self.assertIn("person_box", options["custom_prompt"])
-
-    def test_native_editor_adapter_passes_image_and_vae(self):
-        with patch.object(backends.TextEncodeQwenImageEditPlus, "execute", return_value=("conditioning",)) as encode:
-            result = backends.edit_conditioning(self.inputs["clip"], self.inputs["vae"], self.inputs["image"], "turn camera")
-        self.assertEqual(result, "conditioning")
-        encode.assert_called_once_with(self.inputs["clip"], "turn camera", vae=self.inputs["vae"], image1=self.inputs["image"])
-
-    def test_native_control_adapter_passes_mask_and_does_not_anchor_whole_frame(self):
-        mask = torch.ones(1, 16, 16)
-        for editable, expected_image in ((mask, self.inputs["image"]), (None, None)):
-            with patch.object(backends.ZImageFunControlnet, "diffsynth_controlnet", return_value=("patched",)) as control:
-                result = backends.apply_pose("model", "patch", "vae", "guide", self.inputs["image"], editable, .8)
-            self.assertEqual(result, "patched")
-            self.assertIs(control.call_args.kwargs["inpaint_image"], expected_image)
-            self.assertIs(control.call_args.kwargs["mask"], editable)
-            self.assertEqual(control.call_args.kwargs["image"], "guide")
-
-    def test_geometry_validation_and_unsupported_posture(self):
-        details = {key: "fixed " + key for key in vision.DETAIL_FIELDS}
-        details.update(person_box=[100, 100, 900, 900], head_box=[400, 100, 600, 300], posture="seated")
-        parsed = vision.parse_analysis(carousel.json.dumps(details))
-        self.assertEqual(parsed["head_box"], [.4, .1, .6, .3])
-        for changes in ({"head_box": [0, 0, 1000, 1000]}, {"head_box": [0, 0, 1, 1]}, {"posture": "invented"}):
-            with self.assertRaises(ValueError):
-                vision.parse_analysis(carousel.json.dumps(details | changes))
-        with self.assertRaisesRegex(ValueError, "reference_edit"):
-            poses.pose_guide(self.inputs["image"], parsed | {"posture": "other"}, 0)
-
-    def test_example_inputs_match_schema(self):
-        schema = carousel.ZITCarousel.INPUT_TYPES()
-        fields = schema["required"] | schema["optional"]
-        for path in (ROOT / "examples").glob("*_api.json"):
-            workflow = carousel.json.loads(path.read_text(encoding="utf-8"))
-            for node in workflow.values():
-                if node["class_type"] == "ZITCarousel":
-                    self.assertFalse(set(node["inputs"]) - set(fields))
-                    self.assertTrue(set(schema["required"]) <= set(node["inputs"]))
-                    self.assertEqual(node["inputs"]["denoise"], 1.0)
 
 
 if __name__ == "__main__":

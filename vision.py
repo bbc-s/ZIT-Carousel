@@ -14,7 +14,6 @@ Return ONLY a JSON object with these keys:
 "lighting": direction, softness, shadows, time of day and color;
 "style": photographic/rendering style and palette;
 "action": ONLY the coarse activity, such as sitting on the bench or standing in the studio;
-"posture": exactly "standing", "seated", or "other";
 "head_box": [left, top, right, bottom] enclosing the visible head including hair,
 using INTEGER coordinates on the same 0..1000 scale;
 "person_box": [left, top, right, bottom], the bounding box of the entire visible person,
@@ -91,10 +90,6 @@ def parse_analysis(text):
         if not (left <= head[0] < head[2] <= right and top <= head[1] < head[3] <= bottom):
             raise ValueError("ZIT Carousel: QwenVL head_box must be inside person_box.")
         details["head_box"] = [value / 1000 for value in head]
-    if "posture" in data:
-        if data["posture"] not in ("standing", "seated", "other"):
-            raise ValueError("ZIT Carousel: invalid posture from QwenVL.")
-        details["posture"] = data["posture"]
     return details
 
 
